@@ -2,7 +2,6 @@
 
 use std::io::prelude::*;
 
-use std::cmp;
 use std::fmt;
 use std::io::{self, Initializer, SeekFrom};
 
@@ -49,7 +48,7 @@ pub struct RevBufReader<R> {
     cap: usize,
 }
 
-impl<R: Read> RevBufReader<R> {
+impl<R: Read + Seek> RevBufReader<R> {
     /// Creates a new `RevBufReader` with a default buffer capacity. The default is currently 8 KB,
     /// but may change in the future.
     ///
@@ -85,11 +84,13 @@ impl<R: Read> RevBufReader<R> {
     ///     Ok(())
     /// }
     /// ```
-    pub fn with_capacity(cap: usize, inner: R) -> RevBufReader<R> {
+    pub fn with_capacity(cap: usize, mut inner: R) -> RevBufReader<R> {
         unsafe {
             let mut buffer = Vec::with_capacity(cap);
             buffer.set_len(cap);
             inner.initializer().initialize(&mut buffer);
+            inner.seek(SeekFrom::End(0))
+                .expect("Cannot find the end of the stream.");
             RevBufReader {
                 inner,
                 buf: buffer.into_boxed_slice(),
@@ -98,7 +99,9 @@ impl<R: Read> RevBufReader<R> {
             }
         }
     }
+}
 
+impl<R: Read> RevBufReader<R> {
     /// Gets a reference to the underlying reader.
     ///
     /// It is inadvisable to directly read from the underlying reader.
@@ -163,7 +166,7 @@ impl<R: Read> RevBufReader<R> {
     /// }
     /// ```
     pub fn buffer(&self) -> &[u8] {
-        &self.buf[self.pos..self.cap]
+        &self.buf[0..self.pos]
     }
 
     /// Unwraps this `RevBufReader`, returning the underlying reader.
@@ -211,44 +214,55 @@ impl<R: Seek> RevBufReader<R> {
     }
 }
 
-impl<R: Read> Read for RevBufReader<R> {
+impl<R: Read + Seek> Read for RevBufReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // If we don't have any buffered data and we're doing a massive read
         // (larger than our internal buffer), bypass our internal buffer
         // entirely.
-        if self.pos == self.cap && buf.len() >= self.buf.len() {
-            return self.inner.read(buf);
+        if self.pos == 0 && buf.len() >= self.buf.len() {
+            // It should be safe to assume that offset fits within an i64 as the alternative
+            // means we managed to allocate 8 exbibytes and that's absurd.
+            let offset = (self.cap + buf.len()) as i64;
+            // TODO: Prevent seeking to position before zero.
+            let position = self.inner.seek(SeekFrom::Current(-offset))?;
+            self.cap = 0;
+            let bytes = self.inner.read(buf)?;
+            self.inner.seek(SeekFrom::Start(position))
+                .expect("Unable to return to previous position.");
+            return Ok(bytes);
         }
         let nread = {
-            let mut rem = self.fill_buf()?;
+            let rem = self.fill_buf()?;
+            let offset = rem.len().saturating_sub(buf.len());
+            let mut rem = &rem[offset..];
             rem.read(buf)?
         };
         self.consume(nread);
         Ok(nread)
     }
 
-    // we can't skip unconditionally because of the large buffer case in read.
+    // We can't skip unconditionally because of the large buffer case in read.
     unsafe fn initializer(&self) -> Initializer {
         self.inner.initializer()
     }
 }
 
-impl<R: Read> BufRead for RevBufReader<R> {
+impl<R: Read + Seek> BufRead for RevBufReader<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         // If we've reached the end of our internal buffer then we need to fetch
         // some more data from the underlying reader.
-        // Branch using `>=` instead of the more correct `==`
-        // to tell the compiler that the pos..cap slice is always valid.
-        if self.pos >= self.cap {
-            debug_assert!(self.pos == self.cap);
+        if self.pos == 0 {
+            let offset = (self.cap + self.buf.len()) as i64;
+            // TODO: Prevent seeking to position before zero.
+            self.inner.seek(SeekFrom::Current(-offset))?;
             self.cap = self.inner.read(&mut self.buf)?;
-            self.pos = 0;
+            self.pos = self.cap;
         }
-        Ok(&self.buf[self.pos..self.cap])
+        Ok(&self.buf[0..self.pos])
     }
 
     fn consume(&mut self, amt: usize) {
-        self.pos = cmp::min(self.pos + amt, self.cap);
+        self.pos = self.pos.saturating_sub(amt);
     }
 }
 
@@ -256,7 +270,7 @@ impl<R> fmt::Debug for RevBufReader<R> where R: fmt::Debug {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("RevBufReader")
             .field("reader", &self.inner)
-            .field("buffer", &format_args!("{}/{}", self.cap - self.pos, self.buf.len()))
+            .field("buffer", &format_args!("{}/{}", self.pos, self.buf.len()))
             .finish()
     }
 }
@@ -289,7 +303,7 @@ impl<R: Seek> Seek for RevBufReader<R> {
         let result: u64;
         if let SeekFrom::Current(n) = pos {
             let remainder = (self.cap - self.pos) as i64;
-            // it should be safe to assume that remainder fits within an i64 as the alternative
+            // It should be safe to assume that remainder fits within an i64 as the alternative
             // means we managed to allocate 8 exbibytes and that's absurd.
             // But it's not out of the realm of possibility for some weird underlying reader to
             // support seeking by i64::min_value() so we need to handle underflow when subtracting
@@ -297,16 +311,20 @@ impl<R: Seek> Seek for RevBufReader<R> {
             if let Some(offset) = n.checked_sub(remainder) {
                 result = self.inner.seek(SeekFrom::Current(offset))?;
             } else {
-                // seek backwards by our remainder, and then by the offset
+                // Seek backwards by our remainder, and then by the offset
                 self.inner.seek(SeekFrom::Current(-remainder))?;
-                self.pos = self.cap; // empty the buffer
+                // Invalidate the buffer
+                self.pos = 0;
+                self.cap = 0;
                 result = self.inner.seek(SeekFrom::Current(n))?;
             }
         } else {
             // Seeking with Start/End doesn't care about our buffer length.
             result = self.inner.seek(pos)?;
         }
-        self.pos = self.cap; // empty the buffer
+        // Invalidate the buffer
+        self.pos = 0;
+        self.cap = 0;
         Ok(result)
     }
 }
@@ -320,7 +338,7 @@ mod tests {
     #[test]
     fn test_buffered_reader() {
         let inner: &[u8] = &[5, 6, 7, 0, 1, 2, 3, 4];
-        let mut reader = RevBufReader::with_capacity(2, inner);
+        let mut reader = RevBufReader::with_capacity(2, io::Cursor::new(inner));
 
         let mut buf = [0, 0, 0];
         let nread = reader.read(&mut buf);
@@ -392,6 +410,7 @@ mod tests {
         struct PositionReader {
             pos: u64
         }
+
         impl Read for PositionReader {
             fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
                 let len = buf.len();
@@ -402,6 +421,7 @@ mod tests {
                 Ok(len)
             }
         }
+
         impl Seek for PositionReader {
             fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
                 match pos {
@@ -412,7 +432,7 @@ mod tests {
                         self.pos = self.pos.wrapping_add(n as u64);
                     }
                     SeekFrom::End(n) => {
-                        self.pos = u64::max_value().wrapping_add(n as u64);
+                        self.pos = n as u64;
                     }
                 }
                 Ok(self.pos)
@@ -435,7 +455,7 @@ mod tests {
     #[test]
     fn test_read_until() {
         let inner: &[u8] = &[0, 1, 2, 1, 0];
-        let mut reader = RevBufReader::with_capacity(2, inner);
+        let mut reader = RevBufReader::with_capacity(2, io::Cursor::new(inner));
         let mut v = Vec::new();
         reader.read_until(0, &mut v).unwrap();
         assert_eq!(v, [0]);
@@ -456,7 +476,7 @@ mod tests {
     #[test]
     fn test_read_line() {
         let in_buf: &[u8] = b"a\nb\nc";
-        let mut reader = RevBufReader::with_capacity(2, in_buf);
+        let mut reader = RevBufReader::with_capacity(2, io::Cursor::new(in_buf));
         let mut s = String::new();
         reader.read_line(&mut s).unwrap();
         assert_eq!(s, "c");
@@ -474,7 +494,7 @@ mod tests {
     #[test]
     fn test_lines() {
         let in_buf: &[u8] = b"a\nb\nc";
-        let reader = RevBufReader::with_capacity(2, in_buf);
+        let reader = RevBufReader::with_capacity(2, io::Cursor::new(in_buf));
         let mut it = reader.lines();
         assert_eq!(it.next().unwrap().unwrap(), "c".to_string());
         assert_eq!(it.next().unwrap().unwrap(), "b".to_string());
@@ -496,6 +516,12 @@ mod tests {
                 } else {
                     Ok(self.lengths.remove(0))
                 }
+            }
+        }
+
+        impl Seek for ShortReader {
+            fn seek(&mut self, _: SeekFrom) -> io::Result<u64> {
+                Ok(0)
             }
         }
 
