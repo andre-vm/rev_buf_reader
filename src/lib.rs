@@ -317,21 +317,6 @@ mod tests {
     use std::io::prelude::*;
     use std::io::{self, SeekFrom};
 
-    /// A dummy reader intended at testing short-reads propagation.
-    pub struct ShortReader {
-        lengths: Vec<usize>,
-    }
-
-    impl Read for ShortReader {
-        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-            if self.lengths.is_empty() {
-                Ok(0)
-            } else {
-                Ok(self.lengths.remove(0))
-            }
-        }
-    }
-
     #[test]
     fn test_buffered_reader() {
         let inner: &[u8] = &[5, 6, 7, 0, 1, 2, 3, 4];
@@ -340,7 +325,7 @@ mod tests {
         let mut buf = [0, 0, 0];
         let nread = reader.read(&mut buf);
         assert_eq!(nread.unwrap(), 3);
-        assert_eq!(buf, [5, 6, 7]);
+        assert_eq!(buf, [2, 3, 4]);
         assert_eq!(reader.buffer(), []);
 
         let mut buf = [0, 0];
@@ -352,18 +337,18 @@ mod tests {
         let mut buf = [0];
         let nread = reader.read(&mut buf);
         assert_eq!(nread.unwrap(), 1);
-        assert_eq!(buf, [2]);
-        assert_eq!(reader.buffer(), [3]);
+        assert_eq!(buf, [7]);
+        assert_eq!(reader.buffer(), [6]);
 
         let mut buf = [0, 0, 0];
         let nread = reader.read(&mut buf);
         assert_eq!(nread.unwrap(), 1);
-        assert_eq!(buf, [3, 0, 0]);
+        assert_eq!(buf, [6, 0, 0]);
         assert_eq!(reader.buffer(), []);
 
         let nread = reader.read(&mut buf);
         assert_eq!(nread.unwrap(), 1);
-        assert_eq!(buf, [4, 0, 0]);
+        assert_eq!(buf, [5, 0, 0]);
         assert_eq!(reader.buffer(), []);
 
         assert_eq!(reader.read(&mut buf).unwrap(), 0);
@@ -374,14 +359,14 @@ mod tests {
         let inner: &[u8] = &[5, 6, 7, 0, 1, 2, 3, 4];
         let mut reader = RevBufReader::with_capacity(2, io::Cursor::new(inner));
 
-        assert_eq!(reader.seek(SeekFrom::Start(3)).ok(), Some(3));
+        assert_eq!(reader.seek(SeekFrom::End(-3)).ok(), Some(5));
         assert_eq!(reader.fill_buf().ok(), Some(&[0, 1][..]));
-        assert_eq!(reader.seek(SeekFrom::Current(0)).ok(), Some(3));
+        assert_eq!(reader.seek(SeekFrom::Current(0)).ok(), Some(5));
         assert_eq!(reader.fill_buf().ok(), Some(&[0, 1][..]));
-        assert_eq!(reader.seek(SeekFrom::Current(1)).ok(), Some(4));
-        assert_eq!(reader.fill_buf().ok(), Some(&[1, 2][..]));
+        assert_eq!(reader.seek(SeekFrom::Current(-1)).ok(), Some(4));
+        assert_eq!(reader.fill_buf().ok(), Some(&[7, 0][..]));
         reader.consume(1);
-        assert_eq!(reader.seek(SeekFrom::Current(-2)).ok(), Some(3));
+        assert_eq!(reader.seek(SeekFrom::Current(2)).ok(), Some(5));
     }
 
     #[test]
@@ -389,16 +374,16 @@ mod tests {
         let inner: &[u8] = &[5, 6, 7, 0, 1, 2, 3, 4];
         let mut reader = RevBufReader::with_capacity(2, io::Cursor::new(inner));
 
-        assert!(reader.seek_relative(3).is_ok());
+        assert!(reader.seek_relative(-3).is_ok());
         assert_eq!(reader.fill_buf().ok(), Some(&[0, 1][..]));
         assert!(reader.seek_relative(0).is_ok());
         assert_eq!(reader.fill_buf().ok(), Some(&[0, 1][..]));
-        assert!(reader.seek_relative(1).is_ok());
-        assert_eq!(reader.fill_buf().ok(), Some(&[1][..]));
         assert!(reader.seek_relative(-1).is_ok());
+        assert_eq!(reader.fill_buf().ok(), Some(&[0][..]));
+        assert!(reader.seek_relative(1).is_ok());
         assert_eq!(reader.fill_buf().ok(), Some(&[0, 1][..]));
-        assert!(reader.seek_relative(2).is_ok());
-        assert_eq!(reader.fill_buf().ok(), Some(&[2, 3][..]));
+        assert!(reader.seek_relative(-2).is_ok());
+        assert_eq!(reader.fill_buf().ok(), Some(&[6, 7][..]));
     }
 
     #[test]
@@ -435,11 +420,11 @@ mod tests {
         }
 
         let mut reader = RevBufReader::with_capacity(5, PositionReader { pos: 0 });
-        assert_eq!(reader.fill_buf().ok(), Some(&[0, 1, 2, 3, 4][..]));
-        assert_eq!(reader.seek(SeekFrom::End(-5)).ok(), Some(u64::max_value()-5));
+        assert_eq!(reader.fill_buf().ok(), Some(&[251, 252, 253, 254, 255][..]));
+        assert_eq!(reader.seek(SeekFrom::Start(5)).ok(), Some(5));
         assert_eq!(reader.fill_buf().ok().map(|s| s.len()), Some(5));
         // the following seek will require two underlying seeks
-        let expected = 9_223_372_036_854_775_802;
+        let expected = 9_223_372_036_854_775_813;
         assert_eq!(reader.seek(SeekFrom::Current(i64::min_value())).ok(), Some(expected));
         assert_eq!(reader.fill_buf().ok().map(|s| s.len()), Some(5));
         // seeking to 0 should empty the buffer.
@@ -456,7 +441,7 @@ mod tests {
         assert_eq!(v, [0]);
         v.truncate(0);
         reader.read_until(2, &mut v).unwrap();
-        assert_eq!(v, [1, 2]);
+        assert_eq!(v, [2, 1]);
         v.truncate(0);
         reader.read_until(1, &mut v).unwrap();
         assert_eq!(v, [1]);
@@ -474,13 +459,13 @@ mod tests {
         let mut reader = RevBufReader::with_capacity(2, in_buf);
         let mut s = String::new();
         reader.read_line(&mut s).unwrap();
-        assert_eq!(s, "a\n");
+        assert_eq!(s, "c");
         s.truncate(0);
         reader.read_line(&mut s).unwrap();
         assert_eq!(s, "b\n");
         s.truncate(0);
         reader.read_line(&mut s).unwrap();
-        assert_eq!(s, "c");
+        assert_eq!(s, "a\n");
         s.truncate(0);
         reader.read_line(&mut s).unwrap();
         assert_eq!(s, "");
@@ -491,15 +476,30 @@ mod tests {
         let in_buf: &[u8] = b"a\nb\nc";
         let reader = RevBufReader::with_capacity(2, in_buf);
         let mut it = reader.lines();
-        assert_eq!(it.next().unwrap().unwrap(), "a".to_string());
-        assert_eq!(it.next().unwrap().unwrap(), "b".to_string());
         assert_eq!(it.next().unwrap().unwrap(), "c".to_string());
+        assert_eq!(it.next().unwrap().unwrap(), "b".to_string());
+        assert_eq!(it.next().unwrap().unwrap(), "a".to_string());
         assert!(it.next().is_none());
     }
 
     #[test]
     fn test_short_reads() {
-        let inner = ShortReader{lengths: vec![0, 1, 2, 0, 1, 0]};
+        /// A dummy reader intended at testing short-reads propagation.
+        pub struct ShortReader {
+            lengths: Vec<usize>,
+        }
+
+        impl Read for ShortReader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                if self.lengths.is_empty() {
+                    Ok(0)
+                } else {
+                    Ok(self.lengths.remove(0))
+                }
+            }
+        }
+
+        let inner = ShortReader { lengths: vec![0, 1, 2, 0, 1, 0] };
         let mut reader = RevBufReader::new(inner);
         let mut buf = [0, 0];
         assert_eq!(reader.read(&mut buf).unwrap(), 0);
