@@ -99,6 +99,28 @@ impl<R: Read + Seek> RevBufReader<R> {
             }
         }
     }
+
+    #[inline]
+    fn checked_seek_back(&mut self, length: usize) -> io::Result<usize> {
+        // It should be safe to assume that offset fits within an i64 as the alternative
+        // means we managed to allocate 8 exbibytes and that's absurd.
+        let offset = (self.cap + length) as i64;
+        // This can fail if we're trying to seek to a negative offset.
+        let checked_length = match self.inner.seek(SeekFrom::Current(-offset)) {
+            Ok(_) => length,
+            Err(error) => {
+                let position = self.inner.seek(SeekFrom::Current(0))? as usize;
+                if position > offset as usize {
+                    // In this case, the error is not due to seeking to a negative offset.
+                    return Err(error);
+                }
+                self.inner.seek(SeekFrom::Start(0))?;
+                position.saturating_sub(self.cap)
+            }
+        };
+        self.cap = 0;
+        Ok(checked_length)
+    }
 }
 
 impl<R: Read> RevBufReader<R> {
@@ -220,16 +242,12 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
         // (larger than our internal buffer), bypass our internal buffer
         // entirely.
         if self.pos == 0 && buf.len() >= self.buf.len() {
-            // It should be safe to assume that offset fits within an i64 as the alternative
-            // means we managed to allocate 8 exbibytes and that's absurd.
-            let offset = (self.cap + buf.len()) as i64;
-            // TODO: Prevent seeking to position before zero.
-            let position = self.inner.seek(SeekFrom::Current(-offset))?;
-            self.cap = 0;
-            let bytes = self.inner.read(buf)?;
-            self.inner.seek(SeekFrom::Start(position))
-                .expect("Unable to return to previous position.");
-            return Ok(bytes);
+            let length = self.checked_seek_back(buf.len())?;
+            self.inner.read_exact(&mut buf[..length])
+                .expect("Should be able to read the checked amount of data.");
+            self.inner.seek(SeekFrom::Current(-(length as i64)))
+                .expect("Unable to seek back to previous position.");
+            return Ok(length);
         }
         let nread = {
             let rem = self.fill_buf()?;
@@ -252,10 +270,10 @@ impl<R: Read + Seek> BufRead for RevBufReader<R> {
         // If we've reached the end of our internal buffer then we need to fetch
         // some more data from the underlying reader.
         if self.pos == 0 {
-            let offset = (self.cap + self.buf.len()) as i64;
-            // TODO: Prevent seeking to position before zero.
-            self.inner.seek(SeekFrom::Current(-offset))?;
-            self.cap = self.inner.read(&mut self.buf)?;
+            let length = self.checked_seek_back(self.buf.len())?;
+            self.inner.read_exact(&mut self.buf[..length])
+                .expect("Should be able to read the checked amount of data.");
+            self.cap = length;
             self.pos = self.cap;
         }
         Ok(&self.buf[0..self.pos])
@@ -500,40 +518,5 @@ mod tests {
         assert_eq!(it.next().unwrap().unwrap(), "b".to_string());
         assert_eq!(it.next().unwrap().unwrap(), "a".to_string());
         assert!(it.next().is_none());
-    }
-
-    #[test]
-    fn test_short_reads() {
-        /// A dummy reader intended at testing short-reads propagation.
-        pub struct ShortReader {
-            lengths: Vec<usize>,
-        }
-
-        impl Read for ShortReader {
-            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-                if self.lengths.is_empty() {
-                    Ok(0)
-                } else {
-                    Ok(self.lengths.remove(0))
-                }
-            }
-        }
-
-        impl Seek for ShortReader {
-            fn seek(&mut self, _: SeekFrom) -> io::Result<u64> {
-                Ok(0)
-            }
-        }
-
-        let inner = ShortReader { lengths: vec![0, 1, 2, 0, 1, 0] };
-        let mut reader = RevBufReader::new(inner);
-        let mut buf = [0, 0];
-        assert_eq!(reader.read(&mut buf).unwrap(), 0);
-        assert_eq!(reader.read(&mut buf).unwrap(), 1);
-        assert_eq!(reader.read(&mut buf).unwrap(), 2);
-        assert_eq!(reader.read(&mut buf).unwrap(), 0);
-        assert_eq!(reader.read(&mut buf).unwrap(), 1);
-        assert_eq!(reader.read(&mut buf).unwrap(), 0);
-        assert_eq!(reader.read(&mut buf).unwrap(), 0);
     }
 }
