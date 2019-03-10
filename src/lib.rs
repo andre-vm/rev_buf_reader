@@ -25,11 +25,11 @@ impl Drop for Guard<'_> {
     }
 }
 
-// A few methods below (read_to_string, read_line) will append data into a
-// `String` buffer, but we need to be pretty careful when doing this. The
-// implementation will just call `.as_mut_vec()` and then delegate to a
-// byte-oriented reading method, but we must ensure that when returning we never
-// leave `buf` in a state such that it contains invalid UTF-8 in its bounds.
+// The method `read_line` will append data into a `String` buffer, but we need to
+// be pretty careful when doing this. The implementation will just call
+// `.as_mut_vec()` and then delegate to a byte-oriented reading method, but we
+// must ensure that when returning we never leave `buf` in a state such that it
+// contains invalid UTF-8 in its bounds.
 //
 // To this end, we use an RAII guard (to protect against panics) which updates
 // the length of the string when it is dropped. This guard initially truncates
@@ -106,22 +106,18 @@ fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>) -> i
     }
 }
 
-/// The `RevBufReader` struct adds buffering to any reader.
+/// `RevBufReader` is a struct similar to `std::io::BufReader`, which adds
+/// buffering to any reader. But unlike `BufReader`, `RevBufReader` reads a
+/// data stream from the end to the start. The order of the bytes, however,
+/// remains the same. For example, when using `RevBufReader` to read a text file,
+/// we can read the same lines as we would by using `BufReader`, but starting
+/// from the last line until we get to the first one.
 ///
-/// It can be excessively inefficient to work directly with a [`Read`] instance.
-/// For example, every call to [`read`][`TcpStream::read`] on [`TcpStream`]
-/// results in a system call. A `RevBufReader` performs large, infrequent reads on
-/// the underlying [`Read`] and maintains an in-memory buffer of the results.
-///
-/// `RevBufReader` can improve the speed of programs that make *small* and
-/// *repeated* read calls to the same file or network socket. It does not
-/// help when reading very large amounts at once, or reading just one or a few
-/// times. It also provides no advantage when reading from a source that is
-/// already in memory, like a `Vec<u8>`.
+/// In order to able to read a data stream in reverse order, it must implement
+/// both `std::io::Read` and `std::io::Seek`.
 ///
 /// [`Read`]: ../../std/io/trait.Read.html
-/// [`TcpStream::read`]: ../../std/net/struct.TcpStream.html#method.read
-/// [`TcpStream`]: ../../std/net/struct.TcpStream.html
+/// [`Seek`]: ../../std/io/trait.Seek.html
 ///
 /// # Examples
 ///
@@ -136,7 +132,7 @@ fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>) -> i
 ///
 ///     let mut line = String::new();
 ///     let len = reader.read_line(&mut line)?;
-///     println!("First line is {} bytes long", len);
+///     println!("Last line is {} bytes long", len);
 ///     Ok(())
 /// }
 /// ```
@@ -200,6 +196,11 @@ impl<R: Read + Seek> RevBufReader<R> {
         }
     }
 
+    /// Tries to seek `-length` bytes from the current position in the inner stream.
+    /// It can fail because we may be trying to seek behind the start of the stream.
+    /// If that's the case, we seek to the start of the stream, instead. It returns
+    /// a result containing the absolute value of the actual offset that was sought.
+    /// Other errors may occur during this operation, which will be passed to the caller.
     #[inline]
     fn checked_seek_back(&mut self, length: usize) -> io::Result<usize> {
         // It should be safe to assume that offset fits within an i64 as the alternative
