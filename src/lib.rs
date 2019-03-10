@@ -11,11 +11,16 @@ use std::str;
 
 const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
-struct Guard<'a> { buf: &'a mut Vec<u8>, len: usize }
+struct Guard<'a> {
+    buf: &'a mut Vec<u8>,
+    len: usize,
+}
 
 impl Drop for Guard<'_> {
     fn drop(&mut self) {
-        unsafe { self.buf.set_len(self.len); }
+        unsafe {
+            self.buf.set_len(self.len);
+        }
     }
 }
 
@@ -38,15 +43,21 @@ impl Drop for Guard<'_> {
 //    the function only *appends* bytes to the buffer. We'll get undefined
 //    behavior if existing bytes are overwritten to have non-UTF-8 data.
 fn append_to_string<F>(buf: &mut String, f: F) -> io::Result<usize>
-    where F: FnOnce(&mut Vec<u8>) -> io::Result<usize>
+where
+    F: FnOnce(&mut Vec<u8>) -> io::Result<usize>,
 {
     unsafe {
-        let mut g = Guard { len: buf.len(), buf: buf.as_mut_vec() };
+        let mut g = Guard {
+            len: buf.len(),
+            buf: buf.as_mut_vec(),
+        };
         let ret = f(g.buf);
         if str::from_utf8(&g.buf[g.len..]).is_err() {
             ret.and_then(|_| {
-                Err(io::Error::new(io::ErrorKind::InvalidData,
-                               "stream did not contain valid UTF-8"))
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "stream did not contain valid UTF-8",
+                ))
             })
         } else {
             g.len = g.buf.len();
@@ -55,23 +66,33 @@ fn append_to_string<F>(buf: &mut String, f: F) -> io::Result<usize>
     }
 }
 
-fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)
-                                   -> io::Result<usize> {
-    let mut read = 0;
+fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>) -> io::Result<usize> {
+    let mut read = loop {
+        let mut first = [0u8; 1];
+        match r.read(&mut first) {
+            Ok(n) => {
+                buf.extend_from_slice(&first[..n]);
+                break n;
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    };
     loop {
         let (done, used) = {
             let available = match r.fill_buf() {
                 Ok(n) => n,
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e)
+                Err(e) => return Err(e),
             };
-            match memchr::memchr(delim, available) {
-                Some(i) => {
-                    buf.extend_from_slice(&available[..=i]);
-                    (true, i + 1)
+            match memchr::memrchr(delim, available) {
+                Some(mut i) => {
+                    i += 1; // Skip actual detected delimiter
+                    buf.splice(..0, available[i..].iter().cloned());
+                    (true, available.len() - i)
                 }
                 None => {
-                    buf.extend_from_slice(available);
+                    buf.splice(..0, available.iter().cloned());
                     (false, available.len())
                 }
             }
@@ -166,7 +187,8 @@ impl<R: Read + Seek> RevBufReader<R> {
             let mut buffer = Vec::with_capacity(cap);
             buffer.set_len(cap);
             inner.initializer().initialize(&mut buffer);
-            inner.seek(SeekFrom::End(0))
+            inner
+                .seek(SeekFrom::End(0))
                 .expect("Cannot find the end of the stream.");
             RevBufReader {
                 inner,
@@ -219,7 +241,9 @@ impl<R: Read> RevBufReader<R> {
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_ref(&self) -> &R { &self.inner }
+    pub fn get_ref(&self) -> &R {
+        &self.inner
+    }
 
     /// Gets a mutable reference to the underlying reader.
     ///
@@ -239,7 +263,9 @@ impl<R: Read> RevBufReader<R> {
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_mut(&mut self) -> &mut R { &mut self.inner }
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.inner
+    }
 
     /// Returns a reference to the internally buffered data.
     ///
@@ -286,7 +312,9 @@ impl<R: Read> RevBufReader<R> {
     ///     Ok(())
     /// }
     /// ```
-    pub fn into_inner(self) -> R { self.inner }
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
 }
 
 impl<R: Seek> RevBufReader<R> {
@@ -299,17 +327,17 @@ impl<R: Seek> RevBufReader<R> {
         if offset < 0 {
             if let Some(new_pos) = pos.checked_sub((-offset) as u64) {
                 self.pos = new_pos as usize;
-                return Ok(())
+                return Ok(());
             }
         } else {
             if let Some(new_pos) = pos.checked_add(offset as u64) {
                 if new_pos <= self.cap as u64 {
                     self.pos = new_pos as usize;
-                    return Ok(())
+                    return Ok(());
                 }
             }
         }
-        self.seek(SeekFrom::Current(offset)).map(|_|())
+        self.seek(SeekFrom::Current(offset)).map(|_| ())
     }
 }
 
@@ -320,9 +348,11 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
         // entirely.
         if self.pos == 0 && buf.len() >= self.buf.len() {
             let length = self.checked_seek_back(buf.len())?;
-            self.inner.read_exact(&mut buf[..length])
+            self.inner
+                .read_exact(&mut buf[..length])
                 .expect("Should be able to read the checked amount of data.");
-            self.inner.seek(SeekFrom::Current(-(length as i64)))
+            self.inner
+                .seek(SeekFrom::Current(-(length as i64)))
                 .expect("Unable to seek back to previous position.");
             return Ok(length);
         }
@@ -348,7 +378,8 @@ impl<R: Read + Seek> BufRead for RevBufReader<R> {
         // some more data from the underlying reader.
         if self.pos == 0 {
             let length = self.checked_seek_back(self.buf.len())?;
-            self.inner.read_exact(&mut self.buf[..length])
+            self.inner
+                .read_exact(&mut self.buf[..length])
                 .expect("Should be able to read the checked amount of data.");
             self.cap = length;
             self.pos = self.cap;
@@ -372,7 +403,10 @@ impl<R: Read + Seek> BufRead for RevBufReader<R> {
     }
 }
 
-impl<R> fmt::Debug for RevBufReader<R> where R: fmt::Debug {
+impl<R> fmt::Debug for RevBufReader<R>
+where
+    R: fmt::Debug,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("RevBufReader")
             .field("reader", &self.inner)
@@ -514,7 +548,7 @@ mod tests {
     fn test_buffered_reader_seek_underflow() {
         // gimmick reader that yields its position modulo 256 for each byte
         struct PositionReader {
-            pos: u64
+            pos: u64,
         }
 
         impl Read for PositionReader {
@@ -551,7 +585,10 @@ mod tests {
         assert_eq!(reader.fill_buf().ok().map(|s| s.len()), Some(5));
         // the following seek will require two underlying seeks
         let expected = 9_223_372_036_854_775_813;
-        assert_eq!(reader.seek(SeekFrom::Current(i64::min_value())).ok(), Some(expected));
+        assert_eq!(
+            reader.seek(SeekFrom::Current(i64::min_value())).ok(),
+            Some(expected)
+        );
         assert_eq!(reader.fill_buf().ok().map(|s| s.len()), Some(5));
         // seeking to 0 should empty the buffer.
         assert_eq!(reader.seek(SeekFrom::Current(0)).ok(), Some(expected));
@@ -563,13 +600,13 @@ mod tests {
         let inner: &[u8] = &[0, 1, 2, 1, 0];
         let mut reader = RevBufReader::with_capacity(2, io::Cursor::new(inner));
         let mut v = Vec::new();
-        reader.read_until(0, &mut v).unwrap();
+        reader.read_until(1, &mut v).unwrap();
         assert_eq!(v, [0]);
         v.truncate(0);
-        reader.read_until(2, &mut v).unwrap();
+        reader.read_until(1, &mut v).unwrap();
         assert_eq!(v, [2, 1]);
         v.truncate(0);
-        reader.read_until(1, &mut v).unwrap();
+        reader.read_until(0, &mut v).unwrap();
         assert_eq!(v, [1]);
         v.truncate(0);
         reader.read_until(8, &mut v).unwrap();
