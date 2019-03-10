@@ -1,12 +1,19 @@
-#![feature(iovec)]
-#![feature(read_initializer)]
+#![cfg_attr(feature = "iovec", feature(iovec))]
+#![cfg_attr(feature = "read_initializer", feature(read_initializer))]
 
 extern crate memchr;
 
 use std::io::prelude::*;
 
 use std::fmt;
-use std::io::{self, Initializer, IoVecMut, SeekFrom};
+use std::io::{self, SeekFrom};
+
+#[cfg(feature = "iovec")]
+use std::io::IoVecMut;
+
+#[cfg(feature = "read_initializer")]
+use std::io::Initializer;
+
 use std::str;
 
 const DEFAULT_BUF_SIZE: usize = 8 * 1024;
@@ -182,7 +189,10 @@ impl<R: Read + Seek> RevBufReader<R> {
         unsafe {
             let mut buffer = Vec::with_capacity(cap);
             buffer.set_len(cap);
+
+            #[cfg(feature = "read_initializer")]
             inner.initializer().initialize(&mut buffer);
+
             inner
                 .seek(SeekFrom::End(0))
                 .expect("Cannot find the end of the stream.");
@@ -275,7 +285,6 @@ impl<R: Read> RevBufReader<R> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #![feature(bufreader_buffer)]
     /// use rev_buf_reader::RevBufReader;
     /// use std::io::BufRead;
     /// use std::fs::File;
@@ -367,6 +376,7 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
         Ok(nread)
     }
 
+    #[cfg(feature = "iovec")]
     fn read_vectored(&mut self, bufs: &mut [IoVecMut<'_>]) -> io::Result<usize> {
         let total_len = bufs.iter().map(|b| b.len()).sum::<usize>();
         if self.pos == self.cap && total_len >= self.buf.len() {
@@ -390,6 +400,7 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
     }
 
     // We can't skip unconditionally because of the large buffer case in read.
+    #[cfg(feature = "read_initializer")]
     unsafe fn initializer(&self) -> Initializer {
         self.inner.initializer()
     }
