@@ -1,8 +1,7 @@
 #![feature(iovec)]
 #![feature(read_initializer)]
-#![feature(slice_internals)]
 
-use core::slice::memchr;
+extern crate memchr;
 
 use std::io::prelude::*;
 

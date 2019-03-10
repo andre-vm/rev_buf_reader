@@ -5,3 +5,4 @@ authors = ["André Vicente Milack <andrevicente.m@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+memchr="2.2.0"
