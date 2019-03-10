@@ -1,3 +1,4 @@
+#![feature(iovec)]
 #![feature(read_initializer)]
 #![feature(slice_internals)]
 
@@ -6,7 +7,7 @@ use core::slice::memchr;
 use std::io::prelude::*;
 
 use std::fmt;
-use std::io::{self, Initializer, SeekFrom};
+use std::io::{self, Initializer, IoVecMut, SeekFrom};
 use std::str;
 
 const DEFAULT_BUF_SIZE: usize = 8 * 1024;
@@ -361,6 +362,28 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
             let offset = rem.len().saturating_sub(buf.len());
             let mut rem = &rem[offset..];
             rem.read(buf)?
+        };
+        self.consume(nread);
+        Ok(nread)
+    }
+
+    fn read_vectored(&mut self, bufs: &mut [IoVecMut<'_>]) -> io::Result<usize> {
+        let total_len = bufs.iter().map(|b| b.len()).sum::<usize>();
+        if self.pos == self.cap && total_len >= self.buf.len() {
+            let length = self.checked_seek_back(total_len)?;
+            self.inner
+                .read_vectored(bufs)
+                .expect("Should be able to read the checked amount of data.");
+            self.inner
+                .seek(SeekFrom::Current(-(length as i64)))
+                .expect("Unable to seek back to previous position.");
+            return Ok(length);
+        }
+        let nread = {
+            let rem = self.fill_buf()?;
+            let offset = rem.len().saturating_sub(total_len);
+            let mut rem = &rem[offset..];
+            rem.read_vectored(bufs)?
         };
         self.consume(nread);
         Ok(nread)
