@@ -1,17 +1,60 @@
-# Description
+# rev_buf_reader
 
-RevBufReader is a BufReader capable of reading from the end to the start. Its implementation is an adapted copy of the original BufReader from std::io.
+## Description
 
-# Update
+**rev_buf_reader** is Rust crate that provides a buffered reader capable of reading chunks of bytes of a data stream in reverse order. Its implementation is an adapted copy of BufReader from the nightly std::io.
 
-The base folder contains a copy of the following files from libstd folder in the Rust repository:
+## Usage
 
-- /io/buffered.rs
-- /io/mod.rs
-- /sys_common/io.rs
+### Reading chunks of bytes in reverse order:
 
-The RevBufReader implementation is based on those files. Every time a new change is made to one of them in the Rust repository, the following procedure must be done:
+```rust
+extern crate rev_buf_reader;
 
-- Check the diffs between the files from the Rust repository and the ones in the base folder
-- Update the implementation of RevBufReader taking those diffs into account
-- Replace the file in the base folder with the new version from the Rust repository
+use rev_buf_reader::RevBufReader;
+use std::io::{self, Read};
+
+fn main() {
+    let data = [0, 1, 2, 3, 4, 5, 6, 7];
+    let inner = io::Cursor::new(&data);
+    let mut reader = RevBufReader::new(inner);
+    
+    let mut buffer = [0, 0, 0];
+    assert_eq!(reader.read(&mut buffer).ok(), Some(3));
+    assert_eq!(buffer, [5, 6, 7]);
+
+    let mut buffer = [0, 0, 0, 0, 0];
+    assert_eq!(reader.read(&mut buffer).ok(), Some(5));
+    assert_eq!(buffer, [0, 1, 2, 3, 4]);
+}
+```
+
+### Reading text lines in reverse order:
+
+```rust
+extern crate rev_buf_reader;
+
+use rev_buf_reader::RevBufReader;
+use std::io::{self, BufRead};
+
+fn main() {
+    let data = "a\nb\nc";
+    let inner = io::Cursor::new(&data);
+    let reader = RevBufReader::new(inner);
+    let mut lines = reader.lines();
+    
+    assert_eq!(lines.next().unwrap().unwrap(), "c".to_string());
+    assert_eq!(lines.next().unwrap().unwrap(), "b".to_string());
+    assert_eq!(lines.next().unwrap().unwrap(), "a".to_string());
+    assert!(lines.next().is_none());
+}
+```
+
+## Features
+
+**rev_buf_reader** has two features that correspond to experimental features of nightly Rust:
+
+- iovec 
+- read_initializer
+
+If you use these in your project by adding `#![feature(feature_name)]`, you'll need to enable these features for **rev_buf_reader** as well in your Cargo.toml.
