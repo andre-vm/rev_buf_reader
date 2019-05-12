@@ -7,8 +7,7 @@ description = "Crate that provides a buffered reader capable of reading chunks o
 repository = "https://github.com/Milack27/rev_buf_reader"
 exclude = ["base/*"]
 readme = "README.md"
-license = "MIT"
-license-file = "LICENSE"
+license = "Apache-2.0 OR MIT"
 
 [features]
 default=[]
