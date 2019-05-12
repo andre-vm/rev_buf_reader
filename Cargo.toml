@@ -1,6 +1,6 @@
 [package]
 name = "rev_buf_reader"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["André Vicente Milack <andrevicente.m@gmail.com>"]
 edition = "2018"
 description = "Crate that provides a buffered reader capable of reading chunks of bytes of a data stream in reverse order. Its implementation is an adapted copy of BufReader from the nightly std::io."
