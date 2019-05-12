@@ -62,7 +62,7 @@ use std::fmt;
 use std::io::{self, SeekFrom};
 
 #[cfg(feature = "iovec")]
-use std::io::IoVecMut;
+use std::io::IoSliceMut;
 
 #[cfg(feature = "read_initializer")]
 use std::io::Initializer;
@@ -238,10 +238,10 @@ impl<R: Read + Seek> RevBufReader<R> {
     ///     Ok(())
     /// }
     /// ```
-    pub fn with_capacity(cap: usize, mut inner: R) -> RevBufReader<R> {
+    pub fn with_capacity(capacity: usize, mut inner: R) -> RevBufReader<R> {
         unsafe {
-            let mut buffer = Vec::with_capacity(cap);
-            buffer.set_len(cap);
+            let mut buffer = Vec::with_capacity(capacity);
+            buffer.set_len(capacity);
 
             #[cfg(feature = "read_initializer")]
             inner.initializer().initialize(&mut buffer);
@@ -286,7 +286,7 @@ impl<R: Read + Seek> RevBufReader<R> {
     }
 }
 
-impl<R: Read> RevBufReader<R> {
+impl<R> RevBufReader<R> {
     /// Gets a reference to the underlying reader.
     ///
     /// It is inadvisable to directly read from the underlying reader.
@@ -378,6 +378,13 @@ impl<R: Read> RevBufReader<R> {
     pub fn into_inner(self) -> R {
         self.inner
     }
+    
+    /// Invalidates all data in the internal buffer.
+    #[inline]
+    fn discard_buffer(&mut self) {
+        self.pos = 0;
+        self.cap = 0;
+    }
 }
 
 impl<R: Seek> RevBufReader<R> {
@@ -430,7 +437,7 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
     }
 
     #[cfg(feature = "iovec")]
-    fn read_vectored(&mut self, bufs: &mut [IoVecMut<'_>]) -> io::Result<usize> {
+    fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
         let total_len = bufs.iter().map(|b| b.len()).sum::<usize>();
         if self.pos == self.cap && total_len >= self.buf.len() {
             let length = self.checked_seek_back(total_len)?;
@@ -494,7 +501,7 @@ impl<R> fmt::Debug for RevBufReader<R>
 where
     R: fmt::Debug,
 {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("RevBufReader")
             .field("reader", &self.inner)
             .field("buffer", &format_args!("{}/{}", self.pos, self.buf.len()))
@@ -540,18 +547,14 @@ impl<R: Seek> Seek for RevBufReader<R> {
             } else {
                 // Seek backwards by our remainder, and then by the offset
                 self.inner.seek(SeekFrom::Current(-remainder))?;
-                // Invalidate the buffer
-                self.pos = 0;
-                self.cap = 0;
+                self.discard_buffer();
                 result = self.inner.seek(SeekFrom::Current(n))?;
             }
         } else {
             // Seeking with Start/End doesn't care about our buffer length.
             result = self.inner.seek(pos)?;
         }
-        // Invalidate the buffer
-        self.pos = 0;
-        self.cap = 0;
+        self.discard_buffer();
         Ok(result)
     }
 }
@@ -629,6 +632,40 @@ mod tests {
         assert_eq!(reader.fill_buf().ok(), Some(&[0, 1][..]));
         assert!(reader.seek_relative(-2).is_ok());
         assert_eq!(reader.fill_buf().ok(), Some(&[6, 7][..]));
+    }
+
+    #[test]
+    fn test_buffered_reader_invalidated_after_read() {
+        let inner: &[u8] = &[5, 6, 7, 0, 1, 2, 3, 4];
+        let mut reader = RevBufReader::with_capacity(3, io::Cursor::new(inner));
+
+        assert_eq!(reader.fill_buf().ok(), Some(&[2, 3, 4][..]));
+        reader.consume(3);
+
+        let mut buffer = [0, 0, 0, 0, 0];
+        assert_eq!(reader.read(&mut buffer).ok(), Some(5));
+        assert_eq!(buffer, [5, 6, 7, 0, 1]);
+
+        assert!(reader.seek_relative(2).is_ok());
+        let mut buffer = [0, 0];
+        assert_eq!(reader.read(&mut buffer).ok(), Some(2));
+        assert_eq!(buffer, [5, 6]);
+    }
+
+    #[test]
+    fn test_buffered_reader_invalidated_after_seek() {
+        let inner: &[u8] = &[5, 6, 7, 0, 1, 2, 3, 4];
+        let mut reader = RevBufReader::with_capacity(3, io::Cursor::new(inner));
+
+        assert_eq!(reader.fill_buf().ok(), Some(&[2, 3, 4][..]));
+        reader.consume(3);
+
+        assert!(reader.seek(SeekFrom::Current(-5)).is_ok());
+
+        assert!(reader.seek_relative(2).is_ok());
+        let mut buffer = [0, 0];
+        assert_eq!(reader.read(&mut buffer).ok(), Some(2));
+        assert_eq!(buffer, [5, 6]);
     }
 
     #[test]
