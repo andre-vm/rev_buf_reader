@@ -1,12 +1,10 @@
-# rev_buf_reader
-
-## Description
-
 **rev_buf_reader** is Rust crate that provides a buffered reader capable of reading chunks of bytes of a data stream in reverse order. Its implementation is an adapted copy of BufReader from the nightly std::io.
 
-## Usage
+[![](https://meritbadge.herokuapp.com/rev_buf_reader)](https://crates.io/crates/rev_buf_reader)
 
-### Reading chunks of bytes in reverse order:
+# Usage
+
+## Reading chunks of bytes in reverse order:
 
 ```rust
 extern crate rev_buf_reader;
@@ -29,7 +27,7 @@ fn main() {
 }
 ```
 
-### Reading text lines in reverse order:
+## Reading text lines in reverse order:
 
 ```rust
 extern crate rev_buf_reader;
@@ -50,7 +48,7 @@ fn main() {
 }
 ```
 
-## Features
+# Features
 
 **rev_buf_reader** has two features that correspond to experimental features of nightly Rust:
 
