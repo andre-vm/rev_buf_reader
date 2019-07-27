@@ -720,6 +720,47 @@ mod tests {
     }
 
     #[test]
+    fn test_buffered_reader_seek_underflow_discard_buffer_between_seeks() {
+        // gimmick reader that returns Err after a fixed number of seeks
+        struct ErrAfterSomeSeeksReader {
+            remaining_seeks: usize,
+        }
+        impl Read for ErrAfterSomeSeeksReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                for x in &mut *buf {
+                    *x = 0;
+                }
+                Ok(buf.len())
+            }
+        }
+        impl Seek for ErrAfterSomeSeeksReader {
+            fn seek(&mut self, _: SeekFrom) -> io::Result<u64> {
+                if self.remaining_seeks > 0 {
+                    self.remaining_seeks -= 1;
+                    Ok(0)
+                } else {
+                    Err(io::Error::new(io::ErrorKind::Other, "oh no!"))
+                }
+            }
+        }
+
+        // Just creating the RevBufReader requires a seek to the end of the stream.
+        // Another seek is required to fill the buffer.
+        let mut reader = RevBufReader::with_capacity(5, ErrAfterSomeSeeksReader { remaining_seeks: 3 });
+        assert_eq!(reader.fill_buf().ok(), Some(&[0, 0, 0, 0, 0][..]));
+
+        // Read one byte to place the RevBufReader cursor behind 0.
+        let mut buf: [u8; 1] = [0];
+        assert_eq!(reader.read(&mut buf).ok(), Some(1));
+
+        // The following seek will require two underlying seeks.  The first will
+        // succeed but the second will fail.  This should still invalidate the
+        // buffer.
+        assert!(reader.seek(SeekFrom::Current(i64::min_value())).is_err());
+        assert_eq!(reader.buffer().len(), 0);
+    }
+
+    #[test]
     fn test_read_until() {
         let inner: &[u8] = &[0, 1, 2, 1, 0];
         let mut reader = RevBufReader::with_capacity(2, io::Cursor::new(inner));
