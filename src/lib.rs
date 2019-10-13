@@ -165,11 +165,11 @@ fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>) -> i
     }
 }
 
-/// `RevBufReader` is a struct similar to `std::io::BufReader`, which adds
-/// buffering to any reader. But unlike `BufReader`, `RevBufReader` reads a
+/// `RevBufReader<R>` is a struct similar to `std::io::BufReader<R>`, which adds
+/// buffering to any reader. But unlike `BufReader<R>`, `RevBufReader<R>` reads a
 /// data stream from the end to the start. The order of the bytes, however,
-/// remains the same. For example, when using `RevBufReader` to read a text file,
-/// we can read the same lines as we would by using `BufReader`, but starting
+/// remains the same. For example, when using `RevBufReader<R>` to read a text file,
+/// we can read the same lines as we would by using `BufReader<R>`, but starting
 /// from the last line until we get to the first one.
 ///
 /// In order to able to read a data stream in reverse order, it must implement
@@ -203,7 +203,7 @@ pub struct RevBufReader<R> {
 }
 
 impl<R: Read + Seek> RevBufReader<R> {
-    /// Creates a new `RevBufReader` with a default buffer capacity. The default is currently 8 KB,
+    /// Creates a new `RevBufReader<R>` with a default buffer capacity. The default is currently 8 KB,
     /// but may change in the future.
     ///
     /// # Examples
@@ -222,7 +222,7 @@ impl<R: Read + Seek> RevBufReader<R> {
         RevBufReader::with_capacity(DEFAULT_BUF_SIZE, inner)
     }
 
-    /// Creates a new `RevBufReader` with the specified buffer capacity.
+    /// Creates a new `RevBufReader<R>` with the specified buffer capacity.
     ///
     /// # Examples
     ///
@@ -357,7 +357,7 @@ impl<R> RevBufReader<R> {
         &self.buf[0..self.pos]
     }
 
-    /// Unwraps this `RevBufReader`, returning the underlying reader.
+    /// Unwraps this `RevBufReader<R>`, returning the underlying reader.
     ///
     /// Note that any leftover data in the internal buffer is lost.
     ///
@@ -513,7 +513,7 @@ impl<R: Seek> Seek for RevBufReader<R> {
     /// Seek to an offset, in bytes, in the underlying reader.
     ///
     /// The position used for seeking with `SeekFrom::Current(_)` is the
-    /// position the underlying reader would be at if the `RevBufReader` had no
+    /// position the underlying reader would be at if the `RevBufReader<R>` had no
     /// internal buffer.
     ///
     /// Seeking always discards the internal buffer, even if the seek position
