@@ -14,4 +14,4 @@ default=[]
 read_initializer=[]
 
 [dependencies]
-memchr="2.2.0"
+memchr="2.3.0"
