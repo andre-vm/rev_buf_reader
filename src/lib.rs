@@ -47,7 +47,6 @@ assert!(lines.next().is_none());
 ```
  */
 
-#![cfg_attr(feature = "iovec", feature(iovec))]
 #![cfg_attr(feature = "read_initializer", feature(read_initializer))]
 
 extern crate memchr;
@@ -55,10 +54,7 @@ extern crate memchr;
 use std::io::prelude::*;
 
 use std::fmt;
-use std::io::{self, SeekFrom};
-
-#[cfg(feature = "iovec")]
-use std::io::IoSliceMut;
+use std::io::{self, IoSliceMut, SeekFrom};
 
 #[cfg(feature = "read_initializer")]
 use std::io::Initializer;
@@ -433,7 +429,6 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
         Ok(nread)
     }
 
-    #[cfg(feature = "iovec")]
     fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
         let total_len = bufs.iter().map(|b| b.len()).sum::<usize>();
         if self.pos == self.cap && total_len >= self.buf.len() {

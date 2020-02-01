@@ -46,9 +46,7 @@ assert!(lines.next().is_none());
 
 # Features
 
-**rev_buf_reader** has two features that correspond to experimental features of nightly Rust:
-
-- iovec 
-- read_initializer
-
-If you use these in your project by adding `#![feature(feature_name)]`, you'll need to enable these features for **rev_buf_reader** as well in your Cargo.toml.
+**rev_buf_reader** has one feature: `read_initializer`, which corresponds to an
+experimental feature of nightly Rust. If you use it in your project by adding
+`#![feature(read_initializer)]`, you'll need to enable it for **rev_buf_reader**
+as well in your Cargo.toml.
