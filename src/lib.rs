@@ -374,7 +374,7 @@ impl<R> RevBufReader<R> {
     pub fn into_inner(self) -> R {
         self.inner
     }
-    
+
     /// Invalidates all data in the internal buffer.
     #[inline]
     fn discard_buffer(&mut self) {
@@ -742,7 +742,8 @@ mod tests {
 
         // Just creating the RevBufReader requires a seek to the end of the stream.
         // Another seek is required to fill the buffer.
-        let mut reader = RevBufReader::with_capacity(5, ErrAfterSomeSeeksReader { remaining_seeks: 3 });
+        let mut reader =
+            RevBufReader::with_capacity(5, ErrAfterSomeSeeksReader { remaining_seeks: 3 });
         assert_eq!(reader.fill_buf().ok(), Some(&[0, 0, 0, 0, 0][..]));
 
         // Read one byte to place the RevBufReader cursor behind 0.
