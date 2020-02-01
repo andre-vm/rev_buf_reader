@@ -355,7 +355,8 @@ impl<R> RevBufReader<R> {
 
     /// Unwraps this `RevBufReader<R>`, returning the underlying reader.
     ///
-    /// Note that any leftover data in the internal buffer is lost.
+    /// Note that any leftover data in the internal buffer is lost. Therefore,
+    /// a following read from the underlying reader may lead to data loss.
     ///
     /// # Examples
     ///
@@ -403,7 +404,7 @@ impl<R: Seek> RevBufReader<R> {
                 }
             }
         }
-        self.seek(SeekFrom::Current(offset)).map(|_| ())
+        self.seek(SeekFrom::Current(offset)).map(drop)
     }
 }
 
