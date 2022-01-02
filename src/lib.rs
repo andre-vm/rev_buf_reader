@@ -411,12 +411,10 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
         // entirely.
         if self.pos == 0 && buf.len() >= self.buf.len() {
             let length = self.checked_seek_back(buf.len())?;
-            self.inner
-                .read_exact(&mut buf[..length])
-                .expect("Should be able to read the checked amount of data.");
-            self.inner
-                .seek(SeekFrom::Current(-(length as i64)))
-                .expect("Unable to seek back to previous position.");
+            // This shouldn't error, as we just checked the amount of data.
+            // However, it could error if `inner` can suddenly no longer read.
+            self.inner.read_exact(&mut buf[..length])?;
+            self.inner.seek(SeekFrom::Current(-(length as i64)))?;
             return Ok(length);
         }
         let nread = {
@@ -433,12 +431,10 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
         let total_len = bufs.iter().map(|b| b.len()).sum::<usize>();
         if self.pos == self.cap && total_len >= self.buf.len() {
             let length = self.checked_seek_back(total_len)?;
-            self.inner
-                .read_vectored(bufs)
-                .expect("Should be able to read the checked amount of data.");
-            self.inner
-                .seek(SeekFrom::Current(-(length as i64)))
-                .expect("Unable to seek back to previous position.");
+            // This shouldn't error, as we just checked the amount of data.
+            // However, it could error if `inner` can suddenly no longer read.
+            self.inner.read_vectored(bufs)?;
+            self.inner.seek(SeekFrom::Current(-(length as i64)))?;
             return Ok(length);
         }
         let nread = {
@@ -464,9 +460,7 @@ impl<R: Read + Seek> BufRead for RevBufReader<R> {
         // some more data from the underlying reader.
         if self.pos == 0 {
             let length = self.checked_seek_back(self.buf.len())?;
-            self.inner
-                .read_exact(&mut self.buf[..length])
-                .expect("Should be able to read the checked amount of data.");
+            self.inner.read_exact(&mut self.buf[..length])?;
             self.cap = length;
             self.pos = self.cap;
         }
