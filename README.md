@@ -41,14 +41,14 @@ extern crate rev_buf_reader;
 use rev_buf_reader::RevBufReader;
 use std::io::{self, BufRead};
 
-let data = "a\nb\nc";
+let data = "This\nis\na sentence";
 let inner = io::Cursor::new(&data);
 let reader = RevBufReader::new(inner);
 let mut lines = reader.lines();
 
-assert_eq!(lines.next().unwrap().unwrap(), "c".to_string());
-assert_eq!(lines.next().unwrap().unwrap(), "b".to_string());
-assert_eq!(lines.next().unwrap().unwrap(), "a".to_string());
+assert_eq!(lines.next().unwrap().unwrap(), "a sentence".to_string());
+assert_eq!(lines.next().unwrap().unwrap(), "is".to_string());
+assert_eq!(lines.next().unwrap().unwrap(), "This".to_string());
 assert!(lines.next().is_none());
 ```
 
