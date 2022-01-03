@@ -8,8 +8,6 @@
 
 This Rust crate provides a buffered reader capable of reading chunks of bytes of a data stream in reverse order. Its implementation is an adapted copy of BufReader from the nightly std::io.
 
-[![](https://meritbadge.herokuapp.com/rev_buf_reader)](https://crates.io/crates/rev_buf_reader)
-
 # Usage
 
 ## Reading chunks of bytes in reverse order:
