@@ -392,14 +392,13 @@ impl<R: Seek> RevBufReader<R> {
                 self.pos = new_pos as usize;
                 return Ok(());
             }
-        } else {
-            if let Some(new_pos) = pos.checked_add(offset as u64) {
-                if new_pos <= self.cap as u64 {
-                    self.pos = new_pos as usize;
-                    return Ok(());
-                }
+        } else if let Some(new_pos) = pos.checked_add(offset as u64) {
+            if new_pos <= self.cap as u64 {
+                self.pos = new_pos as usize;
+                return Ok(());
             }
         }
+
         self.seek(SeekFrom::Current(offset)).map(drop)
     }
 }
@@ -427,6 +426,7 @@ impl<R: Read + Seek> Read for RevBufReader<R> {
         Ok(nread)
     }
 
+    #[allow(clippy::unused_io_amount)]
     fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
         let total_len = bufs.iter().map(|b| b.len()).sum::<usize>();
         if self.pos == self.cap && total_len >= self.buf.len() {
