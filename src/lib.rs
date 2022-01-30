@@ -61,7 +61,13 @@ use std::io::Initializer;
 
 use std::str;
 
-const DEFAULT_BUF_SIZE: usize = 8 * 1024;
+// Bare metal platforms usually have very small amounts of RAM
+// (in the order of hundreds of KB)
+const DEFAULT_BUF_SIZE: usize = if cfg!(target_os = "espidf") {
+    512
+} else {
+    8 * 1024
+};
 
 struct Guard<'a> {
     buf: &'a mut Vec<u8>,
