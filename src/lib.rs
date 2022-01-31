@@ -100,27 +100,25 @@ impl Drop for Guard<'_> {
 // 2. We're passing a raw buffer to the function `f`, and it is expected that
 //    the function only *appends* bytes to the buffer. We'll get undefined
 //    behavior if existing bytes are overwritten to have non-UTF-8 data.
-fn append_to_string<F>(buf: &mut String, f: F) -> io::Result<usize>
-where
-    F: FnOnce(&mut Vec<u8>) -> io::Result<usize>,
+unsafe fn append_to_string<F>(buf: &mut String, f: F) -> io::Result<usize>
+    where
+        F: FnOnce(&mut Vec<u8>) -> io::Result<usize>,
 {
-    unsafe {
-        let mut g = Guard {
-            len: buf.len(),
-            buf: buf.as_mut_vec(),
-        };
-        let ret = f(g.buf);
-        if str::from_utf8(&g.buf[g.len..]).is_err() {
-            ret.and_then(|_| {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "stream did not contain valid UTF-8",
-                ))
-            })
-        } else {
-            g.len = g.buf.len();
-            ret
-        }
+    let mut g = Guard {
+        len: buf.len(),
+        buf: buf.as_mut_vec(),
+    };
+    let ret = f(g.buf);
+    if str::from_utf8(&g.buf[g.len..]).is_err() {
+        ret.and_then(|_| {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stream did not contain valid UTF-8",
+            ))
+        })
+    } else {
+        g.len = g.buf.len();
+        ret
     }
 }
 
@@ -172,9 +170,6 @@ fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>) -> i
 ///
 /// In order to able to read a data stream in reverse order, it must implement
 /// both `std::io::Read` and `std::io::Seek`.
-///
-/// [`Read`]: ../../std/io/trait.Read.html
-/// [`Seek`]: ../../std/io/trait.Seek.html
 ///
 /// # Examples
 ///
@@ -331,7 +326,9 @@ impl<R> RevBufReader<R> {
 
     /// Returns a reference to the internally buffered data.
     ///
-    /// Unlike `fill_buf`, this will not attempt to fill the buffer if it is empty.
+    /// Unlike [`fill_buf`], this will not attempt to fill the buffer if it is empty.
+    ///
+    /// [`fill_buf`]: BufRead::fill_buf
     ///
     /// # Examples
     ///
@@ -353,6 +350,30 @@ impl<R> RevBufReader<R> {
     /// ```
     pub fn buffer(&self) -> &[u8] {
         &self.buf[0..self.pos]
+    }
+
+    /// Returns the number of bytes the internal buffer can hold at once.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use rev_buf_reader::RevBufReader;
+    ///
+    /// use std::io::{BufRead};
+    /// use std::fs::File;
+    ///
+    /// fn main() -> std::io::Result<()> {
+    ///     let f = File::open("log.txt")?;
+    ///     let mut reader = RevBufReader::new(f);
+    ///
+    ///     let capacity = reader.capacity();
+    ///     let buffer = reader.fill_buf()?;
+    ///     assert!(buffer.len() <= capacity);
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn capacity(&self) -> usize {
+        self.buf.len()
     }
 
     /// Unwraps this `RevBufReader<R>`, returning the underlying reader.
@@ -485,7 +506,7 @@ impl<R: Read + Seek> BufRead for RevBufReader<R> {
         // Note that we are not calling the `.read_until` method here, but
         // rather our hardcoded implementation. For more details as to why, see
         // the comments in `read_to_end`.
-        append_to_string(buf, |b| read_until(self, b'\n', b))
+        unsafe { append_to_string(buf, |b| read_until(self, b'\n', b)) }
     }
 }
 
